@@ -1,0 +1,116 @@
+---
+title: "AutoRAG-Allocator — Budget-Aware Model Assignment for Compound RAG Pipelines"
+author: "Robert Zhang"
+date: "2025-10-04"
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    transition: slide
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+execute:
+  echo: true
+  warning: false
+  message: false
+  freeze: auto
+---
+
+## Problem Statement & Goal
+
+
+ **Background.** My interest in compound RAG systems and automated model selection grew from working on AI infrastructure and semiconductor data pipelines, where I often balanced accuracy, runtime, and cost across different environments. I realized similar trade-offs exist in large language model pipelines, making this project a natural extension of my experience in systems design, applied AI, and performance optimization.
+ 
+**Problem.** Compound RAG systems (retriever → generator → verifier) rely on manual model choices per module. This leads to unclear trade‑offs among accuracy, latency, and cost, and projects are hard to reproduce.
+
+**Goal.** Build a small library and CLI that **automatically assigns a model per module** under a **budget** (time/$), and **demonstrate a measurable accuracy lift** at equal or lower cost. The artifact should be easy to reproduce for classmates and TAs.
+
+## Methodology Overview
+
+**System.** Three model banks (retrievers, generators, verifiers) plugged into a standard RAG pipeline. An **allocator** profiles a few queries, then searches model triplets that fit a budget and returns **Pareto‑optimal** choices.
+
+**Evaluation.** Use small, public QA subsets (e.g., NQ‑Open 100). Report **EM/F1**, p50/p95 latency, and per‑query cost. Baselines: (i) single model for all modules, (ii) flat grid over banks.
+
+**Success criteria.** ≥ **+5 EM** vs. uniform baseline at ≤ same cost; ≤ **2 s** average latency; fixed seeds and one‑command reproduction.
+
+## Code Snippet 1 (Allocator Core)
+
+```python
+# src/allocator/allocate.py
+import itertools
+
+def pareto_front(rows, q="em", c="cost"):
+    pf = []
+    for r in rows:
+        if not any(
+            (s[q] >= r[q] and s[c] <= r[c]) and (s[q] > r[q] or s[c] < r[c])
+            for s in rows
+        ):
+            pf.append(r)
+    return sorted(pf, key=lambda x: (-x[q], x[c]))
+
+def allocate(RETRIEVERS, GENERATORS, VERIFIERS, budget_ms, budget_usd, eval_combo):
+    rows = []
+    for R, G, V in itertools.product(RETRIEVERS, GENERATORS, VERIFIERS):
+        m = eval_combo(R, G, V)
+        if m["lat"] <= budget_ms and m["cost"] <= budget_usd:
+            rows.append(dict(R=R, G=G, V=V, **m))
+    return pareto_front(rows)
+```
+
+## Explanation of Snippet 1
+
+- `allocate` enumerates candidate triplets (R, G, V), evaluates each with `eval_combo`, and filters by **latency** and **cost** budgets.  
+- `pareto_front` keeps only non‑dominated choices on **quality (EM)** vs **cost**, then sorts for easy inspection.  
+- This is the **decision core** of the prototype: it makes the budget/quality trade‑off explicit and auditable. The function is pure, testable, and deterministic given a fixed `eval_combo` and seed.
+
+## Code Snippet 2 (Evaluation Hook, ≤20 lines)
+
+```python
+# src/eval/eval_combo.py
+import time
+
+def eval_combo(R, G, V):
+    start = time.time()
+    answers = []
+    cost_cents = 0.0
+    for q in DATASET:  # small fixed subset (e.g., 100 items)
+        docs = R.retrieve(q, k=8)
+        ans  = G.generate(q, docs)
+        ok   = V.verify(q, ans, docs)
+        answers.append((ans, ok))
+        cost_cents += R.cost + G.cost + V.cost
+    em, f1 = compute_metrics(answers, GOLD)
+    lat_ms = (time.time() - start) * 1000 / len(DATASET)
+    return {"em": em, "f1": f1, "lat": lat_ms, "cost": cost_cents/len(DATASET)}
+```
+
+## Explanation of Snippet 2
+
+- `eval_combo` runs a **compact loop** over a fixed dataset slice and returns **EM/F1**, average **latency per query**, and **cost per query**.  
+- Costs are aggregated from module‑level constants or token logs; latency is normalized per sample.  
+- Keeping this function small and side‑effect‑free makes results **repeatable** and allows ablations (swap banks, change `k`, replace verifier) without changing the allocator.
+
+## Preliminary Result
+
+**Dataset:** NQ‑Open (mini, n=100). Fixed seed and cached retrieval.
+
+| System                                   | EM | F1 | Avg Lat (ms) | Cost (¢/q) |
+|------------------------------------------|---:|---:|-------------:|-----------:|
+| Uniform (Llama‑3‑8B all modules)         | 62 | 69 |         1700 |       6.2  |
+| Allocated (MiniLM / Mistral‑7B / 4o‑mini)| 68 | 74 |         1550 |       4.9  |
+
+**Observation.** Allocation improves EM by ~6 points **while lowering cost and latency**. Numbers are early; we will confirm with three seeds and add HotpotQA‑mini.
+
+## Result Analysis & Next Steps
+
+**Interpretation.** The simple allocator already identifies a **better operating point** than the uniform baseline. Gains appear to come from a stronger verifier and a lighter retriever.
+
+**Immediate next steps.**
+1. Add an **adaptive** allocator using a small probe set before the full run.  
+2. Extend tasks (HotpotQA‑mini; a small code‑QA variant).  
+3. Run **ablations**: uniform vs allocated vs adaptive; budget sweeps; judge strength.  
+4. Ship a **one‑command repro** (Docker + dataset hashes) and a short demo video.
+
+*End of Checkpoint 1*
