@@ -1,13 +1,17 @@
+# Requirements for Google Colab
+# Use faiss-gpu instead of faiss-cpu for GPU acceleration
+
 openai>=1.0.0
 anthropic>=0.3.0
 huggingface-hub>=0.20.0
 sentence-transformers>=2.2.0
 datasets>=2.14.0
-faiss-cpu>=1.7.4
+faiss-gpu>=1.7.4  # GPU version for Colab
 numpy>=1.24.0
 pandas>=2.0.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 tqdm>=4.65.0
 python-dotenv>=1.0.0
+torch>=2.0.0  # For GPU checks
 

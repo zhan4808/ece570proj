@@ -10,56 +10,43 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.loader import load_nq_open, load_hotpotqa
+from src.data.corpus import load_wikipedia_corpus
 from src.models.retrievers import MiniLMRetriever, BGESmallRetriever, BGEBaseRetriever
 from src.models.generators import GPT4oMiniGenerator, Llama3Generator, Llama31Generator, MistralGenerator
-from src.models.verifiers import MiniLMVerifier, GPT35Verifier, GPT4oMiniVerifier
+from src.models.verifiers import MiniLMVerifier, GPT35Verifier, GPT4oMiniVerifier, LlamaVerifier
 from src.allocator.profiler import adaptive_profile
 from src.allocator.selector import select_triplets
 from src.allocator.pareto import pareto_front
 from src.eval.pipeline import run_pipeline
 
 
-def build_corpus_from_dataset(dataset):
-    """Build corpus from dataset contexts or create synthetic corpus."""
-    corpus = []
+def build_corpus_from_wikipedia(n_passages: int = 10000, seed: int = 42):
+    """
+    Load Wikipedia passage corpus for NQ-Open.
     
-    # First, try to use context fields
-    for item in dataset:
-        context = item.get('context', '')
-        if context and context.strip():
-            corpus.append(context)
+    Uses DPR Wikipedia passages which are the standard corpus for
+    Natural Questions evaluation in RAG systems.
     
-    # If no context, create corpus from questions + answers (synthetic documents)
-    if not corpus:
-        for item in dataset:
-            question = item.get('question', '')
-            answer = item.get('answer', '')
-            if isinstance(answer, list) and answer:
-                answer_str = answer[0]
-            elif isinstance(answer, str):
-                answer_str = answer
-            else:
-                answer_str = str(answer)
-            
-            # Create a synthetic document from question + answer
-            doc = f"Question: {question} Answer: {answer_str}"
-            corpus.append(doc)
+    Args:
+        n_passages: Number of Wikipedia passages to load
+        seed: Random seed for reproducibility
     
-    # If still empty, create dummy corpus
-    if not corpus:
-        corpus = ["Dummy document for retrieval."] * 10
-    
-    return corpus
+    Returns:
+        List of passage strings
+    """
+    return load_wikipedia_corpus(n_passages=n_passages, seed=seed)
 
 
 def run_baseline(dataset_name: str, dataset, corpus):
-    """Run uniform baseline."""
+    """Run uniform baseline using Llama-3.3-70B (matching paper's 'Uniform-Llama3')."""
     print(f"\n=== Running Baseline: {dataset_name} ===")
     
-    # Use GPT-3.5-turbo for all modules (closest to uniform baseline)
+    # Paper's "Uniform-Llama3" uses Llama-3-8B for all modules
+    # We use Llama-3.3-70B (current available model) for generator and verifier
+    # Retrievers are typically not LLMs, so we keep BGE-small
     retriever = BGESmallRetriever(corpus=corpus)
-    generator = GPT4oMiniGenerator()  # Use GPT-4o-mini as closest available
-    verifier = GPT35Verifier()
+    generator = Llama3Generator()  # Llama-3.3-70B
+    verifier = LlamaVerifier()  # Llama-3.3-70B
     
     results = run_pipeline(retriever, generator, verifier, dataset, seed=42)
     
@@ -177,7 +164,13 @@ def main():
     # Load datasets
     print("\nLoading datasets...")
     nq_data = load_nq_open(n_samples=100, seed=42)
-    nq_corpus = build_corpus_from_dataset(nq_data)
+    
+    # Build corpus from Wikipedia passages (not from dataset)
+    # Allow configurable corpus size via environment variable (default: 1000 for disk space)
+    corpus_size = int(os.getenv("CORPUS_SIZE", "1000"))
+    print(f"\nBuilding corpus from Wikipedia passages ({corpus_size} passages)...")
+    print(f"Note: Set CORPUS_SIZE=10000 for full corpus (requires ~100GB disk space)")
+    nq_corpus = build_corpus_from_wikipedia(n_passages=corpus_size, seed=42)
     
     # For MVP, focus on NQ-Open only
     # hotpot_data = load_hotpotqa(n_samples=100, seed=42)

@@ -19,30 +19,37 @@ if openai_key:
 else:
     print("✗ OPENAI_API_KEY not found")
 
-# Check Replicate
-replicate_token = os.getenv("REPLICATE_API_TOKEN")
-if replicate_token:
-    print(f"✓ REPLICATE_API_TOKEN found: {replicate_token[:10]}...{replicate_token[-4:]}")
+# Check Groq
+groq_key = os.getenv("GROQ_API_KEY")
+if groq_key:
+    print(f"✓ GROQ_API_KEY found: {groq_key[:10]}...{groq_key[-4:]}")
 else:
-    print("✗ REPLICATE_API_TOKEN not found")
+    print("✗ GROQ_API_KEY not found")
 
 print("\n.env file location:", project_root / ".env")
 print(".env file exists:", (project_root / ".env").exists())
 
-# Try to test Replicate connection
-if replicate_token:
-    print("\nTesting Replicate connection...")
+# Try to test Groq connection
+if groq_key:
+    print("\nTesting Groq connection...")
     try:
-        import replicate
-        os.environ["REPLICATE_API_TOKEN"] = replicate_token
-        replicate.default_client.api_token = replicate_token
+        from openai import OpenAI
+        client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=groq_key
+        )
         
         # Try a simple test
-        print("Attempting test call to Replicate...")
-        # Don't actually run, just check if client is configured
-        print(f"Replicate client configured: {replicate.default_client.api_token is not None}")
+        print("Attempting test call to Groq...")
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": "Say 'test'"}],
+            max_tokens=5
+        )
+        result = response.choices[0].message.content.strip()
+        print(f"✓ Groq connection successful! Response: '{result}'")
     except Exception as e:
-        print(f"Error testing Replicate: {e}")
+        print(f"✗ Error testing Groq: {e}")
 
 print("=" * 60)
 

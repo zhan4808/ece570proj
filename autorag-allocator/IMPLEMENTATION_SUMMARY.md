@@ -65,7 +65,7 @@ autorag-allocator/
 
 2. **Set Up API Keys**:
    - Create `.env` file from `.env.example`
-   - Add `OPENAI_API_KEY` and `REPLICATE_API_TOKEN`
+   - Add `OPENAI_API_KEY` and `GROQ_API_KEY`
 
 3. **Run Experiments**:
    ```bash
