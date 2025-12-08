@@ -54,7 +54,8 @@ def load_wikipedia_corpus(n_passages: int = 10000, seed: int = 42, cache_dir: Op
     # Use Wikipedia dataset which is well-maintained and works with streaming
     try:
         print("Loading from Wikipedia dataset (20220301.en)...")
-        dataset = load_dataset("wikipedia", "20220301.en", split="train", streaming=True)
+        # Add trust_remote_code=True to handle any script dependencies
+        dataset = load_dataset("wikipedia", "20220301.en", split="train", streaming=True, trust_remote_code=True)
         
         # Reservoir sampling: randomly sample n_passages from stream
         corpus = []
@@ -154,7 +155,7 @@ def load_wikipedia_corpus(n_passages: int = 10000, seed: int = 42, cache_dir: Op
         # Fallback: Try simpler approach with Natural Questions
         try:
             print("Trying fallback: Natural Questions dataset...")
-            dataset = load_dataset("nq_open", split="train", streaming=True)
+            dataset = load_dataset("nq_open", split="train", streaming=True, trust_remote_code=True)
             
             corpus = []
             seen = 0
@@ -198,7 +199,7 @@ def load_wikipedia_corpus(n_passages: int = 10000, seed: int = 42, cache_dir: Op
     
     if corpus is None or len(corpus) == 0:
         raise RuntimeError(
-            f"Failed to load corpus from all sources. Last error: {last_error}\n"
+            f"Failed to load corpus from all sources. Last error: {last_error if 'last_error' in locals() else 'Unknown'}\n"
             f"Please check your internet connection or use a pre-cached corpus."
         )
     
@@ -218,49 +219,6 @@ def load_wikipedia_corpus(n_passages: int = 10000, seed: int = 42, cache_dir: Op
     print(f"Average passage length: {sum(len(p) for p in corpus) / len(corpus) if corpus else 0:.0f} characters")
     
     return corpus
-        
-    except Exception as e:
-        error_msg = str(e)
-        if "No space left" in error_msg or "disk" in error_msg.lower() or "space" in error_msg.lower():
-            print(f"\n⚠️  Disk space error: Not enough space to download full dataset.")
-            print(f"   Error: {error_msg[:200]}")
-            print(f"\n   Solutions:")
-            print(f"   1. Free up disk space (need ~50-100GB for wiki_dpr dataset)")
-            print(f"   2. Use a smaller corpus size (e.g., n_passages=1000)")
-            print(f"   3. Use alternative smaller dataset (see fallback below)")
-            print(f"\n   Trying fallback: Using smaller Wikipedia dataset...")
-            
-            # Fallback: Use smaller Wikipedia dataset
-            try:
-                print("Loading smaller Wikipedia dataset (20220301.en subset)...")
-                dataset = load_dataset("wikipedia", "20220301.en", split=f"train[:{n_passages*10}]", streaming=True)
-                
-                corpus = []
-                for i, item in enumerate(dataset):
-                    text = item.get('text', '').strip()
-                    if text and len(text) > 100:  # Filter very short articles
-                        corpus.append(text)
-                        if len(corpus) >= n_passages:
-                            break
-                
-                print(f"Loaded {len(corpus)} passages from fallback dataset")
-            except Exception as fallback_error:
-                raise RuntimeError(
-                    f"Both main and fallback corpus loading failed.\n"
-                    f"Main error: {error_msg[:200]}\n"
-                    f"Fallback error: {str(fallback_error)[:200]}\n"
-                    f"Please free up disk space or use a pre-cached corpus."
-                )
-        elif "network" in error_msg.lower() or "connection" in error_msg.lower() or "resolve" in error_msg.lower():
-            print(f"\n⚠️  Network error: Cannot download corpus right now.")
-            print(f"   Error: {error_msg[:200]}")
-            print(f"\n   Solutions:")
-            print(f"   1. Check internet connection and try again")
-            print(f"   2. If you have a cached corpus, it will be used automatically")
-            print(f"   3. For offline testing, you can create a corpus file manually")
-            raise ConnectionError(f"Network required to download corpus: {error_msg}")
-        else:
-            raise
 
 
 def load_wikipedia_corpus_cached(n_passages: int = 10000, seed: int = 42, cache_dir: Path = None) -> List[str]:
