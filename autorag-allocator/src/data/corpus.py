@@ -50,46 +50,174 @@ def load_wikipedia_corpus(n_passages: int = 10000, seed: int = 42, cache_dir: Op
     print("Note: This requires network access and may take several minutes on first run.")
     print("Using streaming mode to minimize disk space requirements.")
     
+    # Try multiple dataset sources (wiki_dpr is deprecated in newer datasets library)
+    # Use Wikipedia dataset which is well-maintained and works with streaming
     try:
-        # Use streaming to avoid loading entire dataset into memory/disk
-        # This samples passages as we iterate, requiring minimal disk space
-        dataset = load_dataset("wiki_dpr", "psgs_w100.nq.exact", split="train", streaming=True)
+        print("Loading from Wikipedia dataset (20220301.en)...")
+        dataset = load_dataset("wikipedia", "20220301.en", split="train", streaming=True)
         
         # Reservoir sampling: randomly sample n_passages from stream
-        # This avoids needing to know total size or load everything
         corpus = []
         seen = 0
         
         for item in dataset:
+            # Wikipedia format: 'text' field contains full article
             text = item.get('text', '').strip()
-            if not text:
+            
+            if not text or len(text) < 100:  # Skip very short articles
                 continue
             
-            seen += 1
+            # Split long articles into passages (Wikipedia articles are typically long)
+            # Use paragraph breaks first, then sentence boundaries if needed
+            paragraphs = text.split('\n\n')  # Split by double newline (paragraphs)
             
-            # Reservoir sampling algorithm
-            if len(corpus) < n_passages:
-                corpus.append(text)
-            else:
-                # Randomly replace an existing item with probability n_passages/seen
-                j = random.randint(0, seen - 1)
-                if j < n_passages:
-                    corpus[j] = text
+            for para in paragraphs:
+                para = para.strip()
+                if len(para) < 100:  # Skip short paragraphs
+                    continue
+                
+                # If paragraph is too long, split by sentences
+                if len(para) > 800:
+                    sentences = para.split('. ')
+                    # Group sentences into chunks of ~200-400 chars
+                    current_chunk = []
+                    for sent in sentences:
+                        sent = sent.strip()
+                        if not sent:
+                            continue
+                        if not sent.endswith('.'):
+                            sent += '.'
+                        
+                        current_chunk.append(sent)
+                        chunk_text = ' '.join(current_chunk)
+                        
+                        # When chunk is substantial, add it
+                        if len(chunk_text) >= 200:
+                            corpus.append(chunk_text)
+                            seen += 1
+                            
+                            # Reservoir sampling
+                            if len(corpus) > n_passages:
+                                j = random.randint(0, seen - 1)
+                                if j < n_passages:
+                                    corpus[j] = chunk_text
+                                else:
+                                    corpus.pop()
+                            
+                            if len(corpus) >= n_passages:
+                                break
+                            
+                            current_chunk = []
+                    
+                    # Add remaining chunk if substantial
+                    if current_chunk:
+                        chunk_text = ' '.join(current_chunk)
+                        if len(chunk_text) >= 100:
+                            corpus.append(chunk_text)
+                            seen += 1
+                            if len(corpus) > n_passages:
+                                j = random.randint(0, seen - 1)
+                                if j < n_passages:
+                                    corpus[j] = chunk_text
+                                else:
+                                    corpus.pop()
+                else:
+                    # Use paragraph as-is if it's a good size
+                    corpus.append(para)
+                    seen += 1
+                    
+                    # Reservoir sampling
+                    if len(corpus) > n_passages:
+                        j = random.randint(0, seen - 1)
+                        if j < n_passages:
+                            corpus[j] = para
+                        else:
+                            corpus.pop()
+                
+                if len(corpus) >= n_passages:
+                    break
+            
+            if len(corpus) >= n_passages:
+                break
         
-        print(f"Streamed through {seen} passages, sampled {len(corpus)}")
+        if len(corpus) < n_passages:
+            print(f"⚠️  Only collected {len(corpus)} passages (requested {n_passages})")
+            print("   This is okay - we'll use what we have")
         
-        # Save to cache
+        print(f"✅ Successfully loaded {len(corpus)} passages from Wikipedia")
+        
+    except Exception as e:
+        last_error = e
+        error_msg = str(e)
+        print(f"⚠️  Error loading Wikipedia dataset: {error_msg[:200]}")
+        
+        # Fallback: Try simpler approach with Natural Questions
         try:
-            with open(cache_file, 'wb') as f:
-                pickle.dump(corpus, f)
-            print(f"Cached corpus to {cache_file}")
-        except Exception as e:
-            print(f"Warning: Failed to cache corpus ({e})")
-        
-        print(f"Loaded {len(corpus)} Wikipedia passages")
-        print(f"Average passage length: {sum(len(p) for p in corpus) / len(corpus) if corpus else 0:.0f} characters")
-        
-        return corpus
+            print("Trying fallback: Natural Questions dataset...")
+            dataset = load_dataset("nq_open", split="train", streaming=True)
+            
+            corpus = []
+            seen = 0
+            
+            for item in dataset:
+                # NQ-Open may have context or we can use the question+answer as a passage
+                text = item.get('context', '')
+                if not text:
+                    # Create a passage from question and answer
+                    question = item.get('question', '')
+                    answer = item.get('answer', [])
+                    if isinstance(answer, list) and len(answer) > 0:
+                        answer = answer[0]
+                    text = f"{question} {answer}".strip()
+                
+                if len(text) < 50:
+                    continue
+                
+                corpus.append(text)
+                seen += 1
+                
+                if len(corpus) > n_passages:
+                    j = random.randint(0, seen - 1)
+                    if j < n_passages:
+                        corpus[j] = text
+                    else:
+                        corpus.pop()
+                
+                if len(corpus) >= n_passages:
+                    break
+            
+            print(f"✅ Loaded {len(corpus)} passages from NQ-Open fallback")
+            
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"Failed to load corpus from all sources.\n"
+                f"Wikipedia error: {error_msg[:200]}\n"
+                f"NQ-Open error: {str(fallback_error)[:200]}\n"
+                f"Please check your internet connection or use a pre-cached corpus."
+            )
+    
+    if corpus is None or len(corpus) == 0:
+        raise RuntimeError(
+            f"Failed to load corpus from all sources. Last error: {last_error}\n"
+            f"Please check your internet connection or use a pre-cached corpus."
+        )
+    
+    # Trim to exact number requested
+    corpus = corpus[:n_passages]
+    print(f"Streamed through dataset, sampled {len(corpus)} passages")
+    
+    # Save to cache
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump(corpus, f)
+        print(f"Cached corpus to {cache_file}")
+    except Exception as e:
+        print(f"Warning: Failed to cache corpus ({e})")
+    
+    print(f"Loaded {len(corpus)} Wikipedia passages")
+    print(f"Average passage length: {sum(len(p) for p in corpus) / len(corpus) if corpus else 0:.0f} characters")
+    
+    return corpus
         
     except Exception as e:
         error_msg = str(e)
