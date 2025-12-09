@@ -48,23 +48,28 @@ class LocalLLMGenerator(BaseGenerator):
         try:
             from transformers import AutoModelForCausalLM, AutoTokenizer
             
+            # Get HF token from environment
+            hf_token = os.getenv('HF_TOKEN')
+            if not hf_token:
+                raise RuntimeError(f"HF_TOKEN not set. Please set HF_TOKEN in environment for gated models like {self.hf_model_path}")
+            
             print(f"Loading {self.display_name} locally (this may take a few minutes)...")
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             
-            # Load tokenizer
+            # Load tokenizer with token
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.hf_model_path,
-                trust_remote_code=True
+                token=hf_token
             )
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             
-            # Load model with 8-bit quantization to fit in A100 (40GB)
+            # Load model with token and float16
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.hf_model_path,
+                token=hf_token,
                 torch_dtype=torch.float16,
                 device_map="auto",
-                trust_remote_code=True,
                 low_cpu_mem_usage=True
             )
             
@@ -306,20 +311,46 @@ def Llama3Generator():
     
     Tries local first (Colab A100), falls back to Groq API.
     """
+    # Check if HF_TOKEN is set and GPU available
+    hf_token = os.getenv('HF_TOKEN')
+    has_gpu = _check_gpu_available()
+    
+    if hf_token and has_gpu:
+        try:
+            return LocalLLMGenerator(
+                model_name="llama-3-8b",
+                display_name="Llama-3-8B",
+                hf_model_path="meta-llama/Llama-3-8B-Instruct"
+            )
+        except Exception as e:
+            error_msg = str(e)
+            if "HF_TOKEN" in error_msg or "token" in error_msg.lower() or "permission" in error_msg.lower():
+                print(f"⚠️  Llama-3-8B requires HF_TOKEN and model access. Error: {error_msg[:100]}")
+                print("   Make sure:")
+                print("   1. HF_TOKEN is set in Colab secrets")
+                print("   2. You've requested access to meta-llama/Llama-3-8B-Instruct on HuggingFace")
+                print("   3. Your access was approved")
+            else:
+                print(f"⚠️  Local Llama-3-8B unavailable ({error_msg[:100]}), trying Groq API fallback...")
+    else:
+        if not hf_token:
+            print("⚠️  HF_TOKEN not set - cannot load Llama-3-8B locally")
+        if not has_gpu:
+            print("⚠️  GPU not available - cannot load Llama-3-8B locally")
+        print("   Using Groq API fallback...")
+    
+    # Fallback to Groq API
     try:
-        return LocalLLMGenerator(
-            model_name="llama-3-8b",
-            display_name="Llama-3-8B",
-            hf_model_path="meta-llama/Llama-3-8B-Instruct"
-        )
-    except Exception as e:
-        print(f"⚠️  Local Llama-3-8B unavailable ({e}), using Groq API fallback...")
         return GroqGenerator(
             model_name="llama-3.1-8b-instant",  # Groq doesn't have 3-8B, use closest
             display_name="Llama-3-8B (Groq)",
             input_price_per_1m=0.05,
             output_price_per_1m=0.08
         )
+    except Exception as e:
+        print(f"❌ Groq API also failed: {e}")
+        print("   Please check GROQ_API_KEY and network connection")
+        raise
 
 
 def Llama31Generator():
@@ -327,20 +358,27 @@ def Llama31Generator():
     
     Tries local first (Colab A100), falls back to Groq API.
     """
-    try:
-        return LocalLLMGenerator(
-            model_name="llama-3.1-8b",
-            display_name="Llama-3.1-8B",
-            hf_model_path="meta-llama/Llama-3.1-8B-Instruct"
-        )
-    except Exception as e:
-        print(f"⚠️  Local Llama-3.1-8B unavailable ({e}), using Groq API fallback...")
-        return GroqGenerator(
-            model_name="llama-3.1-8b-instant",
-            display_name="Llama-3.1-8B (Groq)",
-            input_price_per_1m=0.05,
-            output_price_per_1m=0.08
-        )
+    hf_token = os.getenv('HF_TOKEN')
+    has_gpu = _check_gpu_available()
+    
+    if hf_token and has_gpu:
+        try:
+            return LocalLLMGenerator(
+                model_name="llama-3.1-8b",
+                display_name="Llama-3.1-8B",
+                hf_model_path="meta-llama/Llama-3.1-8B-Instruct"
+            )
+        except Exception as e:
+            print(f"⚠️  Local Llama-3.1-8B unavailable ({str(e)[:100]}), using Groq API fallback...")
+    else:
+        print("⚠️  Using Groq API (HF_TOKEN or GPU not available for local model)")
+    
+    return GroqGenerator(
+        model_name="llama-3.1-8b-instant",
+        display_name="Llama-3.1-8B (Groq)",
+        input_price_per_1m=0.05,
+        output_price_per_1m=0.08
+    )
 
 
 def MistralGenerator():
@@ -348,20 +386,27 @@ def MistralGenerator():
     
     Tries local first (Colab A100), falls back to Groq API.
     """
-    try:
-        return LocalLLMGenerator(
-            model_name="mistral-7b",
-            display_name="Mistral-7B",
-            hf_model_path="mistralai/Mistral-7B-Instruct-v0.2"
-        )
-    except Exception as e:
-        print(f"⚠️  Local Mistral-7B unavailable ({e}), using Groq API fallback...")
-        return GroqGenerator(
-            model_name="mixtral-8x7b-32768",  # Groq doesn't have Mistral-7B, use Mixtral
-            display_name="Mistral-7B (Groq Mixtral)",
-            input_price_per_1m=0.24,
-            output_price_per_1m=0.24
-        )
+    hf_token = os.getenv('HF_TOKEN')
+    has_gpu = _check_gpu_available()
+    
+    if hf_token and has_gpu:
+        try:
+            return LocalLLMGenerator(
+                model_name="mistral-7b",
+                display_name="Mistral-7B",
+                hf_model_path="mistralai/Mistral-7B-Instruct-v0.2"
+            )
+        except Exception as e:
+            print(f"⚠️  Local Mistral-7B unavailable ({str(e)[:100]}), using Groq API fallback...")
+    else:
+        print("⚠️  Using Groq API (HF_TOKEN or GPU not available for local model)")
+    
+    return GroqGenerator(
+        model_name="mixtral-8x7b-32768",  # Groq doesn't have Mistral-7B, use Mixtral
+        display_name="Mistral-7B (Groq Mixtral)",
+        input_price_per_1m=0.24,
+        output_price_per_1m=0.24
+    )
 
 
 class GPT4oMiniGenerator(OpenAIGenerator):
