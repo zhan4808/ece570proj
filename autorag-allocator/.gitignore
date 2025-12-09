@@ -25,7 +25,6 @@ results/*.pdf
 
 # Models cache
 .cache/
-models/
 
 # Jupyter
 .ipynb_checkpoints/
