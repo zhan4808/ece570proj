@@ -13,7 +13,7 @@ from src.data.loader import load_nq_open, load_hotpotqa
 from src.data.corpus import load_wikipedia_corpus
 from src.models.retrievers import MiniLMRetriever, BGESmallRetriever, BGEBaseRetriever
 from src.models.generators import GPT4oMiniGenerator, Llama3Generator, Llama31Generator, MistralGenerator
-from src.models.verifiers import MiniLMVerifier, GPT35Verifier, GPT4oMiniVerifier, LlamaVerifier
+from src.models.verifiers import MiniLMVerifier, GPT35Verifier, GPT4oMiniVerifier
 from src.allocator.profiler import adaptive_profile
 from src.allocator.selector import select_triplets
 from src.allocator.pareto import pareto_front
@@ -38,15 +38,15 @@ def build_corpus_from_wikipedia(n_passages: int = 10000, seed: int = 42):
 
 
 def run_baseline(dataset_name: str, dataset, corpus):
-    """Run uniform baseline using Llama-3.3-70B (matching paper's 'Uniform-Llama3')."""
+    """Run uniform baseline using Llama-3-8B (matching paper's 'Uniform-Llama3')."""
     print(f"\n=== Running Baseline: {dataset_name} ===")
     
-    # Paper's "Uniform-Llama3" uses Llama-3-8B for all modules
-    # We use Llama-3.3-70B (current available model) for generator and verifier
-    # Retrievers are typically not LLMs, so we keep BGE-small
+    # Paper's "Uniform-Llama3" uses Llama-3-8B for generator and verifier
+    # Note: Paper doesn't specify retriever for baseline, using BGE-small as reasonable default
+    # For verifier, paper doesn't use Llama - using GPT-3.5-turbo as closest match
     retriever = BGESmallRetriever(corpus=corpus)
-    generator = Llama3Generator()  # Llama-3.3-70B
-    verifier = LlamaVerifier()  # Llama-3.3-70B
+    generator = Llama3Generator()  # Llama-3-8B (paper specification)
+    verifier = GPT35Verifier()  # Paper uses GPT-3.5-turbo for verifiers, not Llama
     
     results = run_pipeline(retriever, generator, verifier, dataset, seed=42)
     
