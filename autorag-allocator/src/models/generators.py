@@ -309,13 +309,15 @@ Answer:"""
 def Llama3Generator():
     """Llama-3-8B generator (paper specification).
     
-    Tries local first (Colab A100), falls back to Groq API.
+    Tries local first (Colab A100), falls back to Llama-3.1-8B if 3-8B not accessible,
+    then Groq API as last resort.
     """
     # Check if HF_TOKEN is set and GPU available
     hf_token = os.getenv('HF_TOKEN')
     has_gpu = _check_gpu_available()
     
     if hf_token and has_gpu:
+        # Try Llama-3-8B first
         try:
             return LocalLLMGenerator(
                 model_name="llama-3-8b",
@@ -324,22 +326,27 @@ def Llama3Generator():
             )
         except Exception as e:
             error_msg = str(e)
-            if "HF_TOKEN" in error_msg or "token" in error_msg.lower() or "permission" in error_msg.lower():
-                print(f"⚠️  Llama-3-8B requires HF_TOKEN and model access. Error: {error_msg[:100]}")
-                print("   Make sure:")
-                print("   1. HF_TOKEN is set in Colab secrets")
-                print("   2. You've requested access to meta-llama/Llama-3-8B-Instruct on HuggingFace")
-                print("   3. Your access was approved")
+            # If access denied, try Llama-3.1-8B as substitute (very similar model)
+            if "403" in error_msg or "Forbidden" in error_msg or "access" in error_msg.lower() or "permission" in error_msg.lower():
+                print(f"⚠️  Llama-3-8B access denied. Using Llama-3.1-8B as substitute (very similar model)...")
+                try:
+                    return LocalLLMGenerator(
+                        model_name="llama-3.1-8b",
+                        display_name="Llama-3-8B (using 3.1-8B)",
+                        hf_model_path="meta-llama/Llama-3.1-8B-Instruct"
+                    )
+                except Exception as e2:
+                    print(f"⚠️  Llama-3.1-8B also failed: {str(e2)[:100]}")
             else:
-                print(f"⚠️  Local Llama-3-8B unavailable ({error_msg[:100]}), trying Groq API fallback...")
+                print(f"⚠️  Local Llama-3-8B unavailable ({error_msg[:100]}), trying alternatives...")
     else:
         if not hf_token:
             print("⚠️  HF_TOKEN not set - cannot load Llama-3-8B locally")
         if not has_gpu:
             print("⚠️  GPU not available - cannot load Llama-3-8B locally")
-        print("   Using Groq API fallback...")
     
-    # Fallback to Groq API
+    # Fallback to Groq API (but it's currently having connection issues)
+    print("   Trying Groq API fallback...")
     try:
         return GroqGenerator(
             model_name="llama-3.1-8b-instant",  # Groq doesn't have 3-8B, use closest
@@ -348,9 +355,13 @@ def Llama3Generator():
             output_price_per_1m=0.08
         )
     except Exception as e:
-        print(f"❌ Groq API also failed: {e}")
-        print("   Please check GROQ_API_KEY and network connection")
-        raise
+        error_str = str(e)
+        if "Connection" in error_str:
+            print(f"❌ Groq API connection failed (may be temporary outage)")
+            print("   Recommendation: Request access to Llama-3-8B-Instruct at:")
+            print("   https://huggingface.co/meta-llama/Llama-3-8B-Instruct")
+            print("   Then use local model instead")
+        raise RuntimeError(f"Cannot load Llama-3-8B: Local failed and Groq API unavailable. {error_str[:100]}")
 
 
 def Llama31Generator():
