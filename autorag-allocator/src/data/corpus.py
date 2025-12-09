@@ -55,7 +55,7 @@ def load_corpus_from_nq_open(n_passages: int = 10000, seed: int = 42, cache_dir:
     print("Note: This extracts passages from the dataset itself.")
     
     try:
-        dataset = load_dataset("nq_open", split="train", streaming=True, trust_remote_code=True)
+        dataset = load_dataset("nq_open", split="train", streaming=True)
         
         corpus = []
         seen = 0
@@ -157,7 +157,7 @@ def load_corpus_from_hotpotqa(n_passages: int = 10000, seed: int = 42, cache_dir
     print(f"Building corpus from HotpotQA dataset ({n_passages} passages)...")
     
     try:
-        dataset = load_dataset("hotpot_qa", "fullwiki", split="train", streaming=True, trust_remote_code=True)
+            dataset = load_dataset("hotpot_qa", "fullwiki", split="train", streaming=True)
         
         corpus = []
         seen = 0
